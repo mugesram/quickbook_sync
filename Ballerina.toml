@@ -1,0 +1,5 @@
+[package]
+org = "devantdemos"
+name = "quickbook_sync"
+version = "1.0.0"
+distribution = "2201.13.1"
