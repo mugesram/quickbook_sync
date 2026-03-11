@@ -1,33 +1,100 @@
 import ballerina/http;
 import ballerina/log;
+import ballerina/time;
+
+// QuickBooks to Salesforce Sync Service
+//
+// SYNC LOGIC (Name-Based Matching):
+// - Searches Salesforce for existing account by customer name
+// - If found: Updates existing account (subject to conflict resolution)
+// - If not found: Creates new account
+// - Parent-child relationships are maintained
 
 // HTTP Listener for QuickBooks Webhooks
 listener http:Listener webhookListener = check new (webhookPort);
 
+// Startup logging
+function init() {
+    log:printInfo("###################################################################################################");
+    log:printInfo("QUICKBOOKS TO SALESFORCE SYNC SERVICE STARTING");
+    log:printInfo("###################################################################################################");
+    log:printInfo(string `Webhook Port: ${webhookPort}`);
+    log:printInfo(string `Webhook Endpoint: http://localhost:${webhookPort}/quickbooks/webhook`);
+    log:printInfo(string `Health Check: http://localhost:${webhookPort}/quickbooks/health`);
+    log:printInfo(string `Conflict Resolution: ${conflictResolution}`);
+    log:printInfo(string `Filter Active Only: ${filterActiveOnly}`);
+    log:printInfo(string `Create Contact: ${createContact}`);
+    log:printInfo("###################################################################################################");
+    log:printInfo("SERVICE READY - Waiting for webhooks...");
+    log:printInfo("###################################################################################################");
+}
+
+// Root Service for default path
+service / on webhookListener {
+    
+    // Root health check
+    resource function get .() returns json {
+        time:Utc currentTime = time:utcNow();
+        return {
+            status: "UP",
+            serviceName: "QuickBooks to Salesforce Sync",
+            timestamp: currentTime,
+            endpoints: {
+                health: "/quickbooks/health",
+                webhook: "/quickbooks/webhook"
+            }
+        };
+    }
+}
+
 // QuickBooks Webhook Service
 service /quickbooks on webhookListener {
+    
+    // Health check endpoint
+    resource function get health() returns json {
+        time:Utc currentTime = time:utcNow();
+        return {
+            status: "UP",
+            serviceName: "QuickBooks to Salesforce Sync",
+            timestamp: currentTime
+        };
+    }
     
     // Webhook verification endpoint (GET)
     resource function get webhook(@http:Query string verifyToken) returns string|http:Unauthorized {
         if verifyToken == webhookVerifyToken {
+            log:printInfo("Webhook verification successful");
             return "Webhook verified successfully";
         }
+        
+        log:printError("Webhook verification failed - invalid token");
         return http:UNAUTHORIZED;
     }
     
     // Webhook event receiver (POST)
-    resource function post webhook(@http:Payload json webhookPayload) returns http:Ok|http:InternalServerError {
+    resource function post webhook(http:Request request) returns http:Ok|http:InternalServerError {
         
-        log:printInfo("Received QuickBooks webhook event");
+        time:Utc currentTime = time:utcNow();
+        string timestamp = time:utcToString(currentTime);
+        log:printInfo(string `[${timestamp}] Webhook received from QuickBooks`);
         
-        // Process webhook event asynchronously
-        error? processResult = processQuickBooksWebhook(webhookPayload);
+        // Get payload with error handling
+        json|error webhookPayload = request.getJsonPayload();
         
-        if processResult is error {
-            log:printError("Error processing webhook", processResult);
+        if webhookPayload is error {
+            log:printError(string `Failed to parse webhook payload: ${webhookPayload.message()}`);
             return http:INTERNAL_SERVER_ERROR;
         }
         
+        // Process webhook event
+        error? processResult = processQuickBooksWebhook(webhookPayload);
+        
+        if processResult is error {
+            log:printError(string `Webhook processing failed: ${processResult.message()}`);
+            return http:INTERNAL_SERVER_ERROR;
+        }
+        
+        log:printInfo("Webhook processed successfully. Ready for next request.");
         return http:OK;
     }
 }
@@ -35,15 +102,41 @@ service /quickbooks on webhookListener {
 // Process QuickBooks Webhook Event
 function processQuickBooksWebhook(json webhookPayload) returns error? {
     
-    // Parse webhook payload
-    json[] eventNotifications = <json[]>check webhookPayload.eventNotifications;
+    // Check if eventNotifications field exists
+    json|error eventNotificationsResult = webhookPayload.eventNotifications;
+    if eventNotificationsResult is error {
+        log:printError(string `Invalid webhook payload: ${eventNotificationsResult.message()}`);
+        return eventNotificationsResult;
+    }
+    
+    json eventNotificationsJson = eventNotificationsResult;
+    json[] eventNotifications = [];
+    
+    if eventNotificationsJson is json[] {
+        eventNotifications = eventNotificationsJson;
+    } else {
+        eventNotifications = [eventNotificationsJson];
+    }
     
     foreach json notification in eventNotifications {
-        string realmId = check notification.realmId;
-        json[] dataChangeEvents = <json[]>check notification.dataChangeEvent;
+        json dataChangeEventJson = check notification.dataChangeEvent;
+        json[] dataChangeEvents = [];
+        
+        if dataChangeEventJson is json[] {
+            dataChangeEvents = dataChangeEventJson;
+        } else {
+            dataChangeEvents = [dataChangeEventJson];
+        }
         
         foreach json changeEvent in dataChangeEvents {
-            json[] entities = <json[]>check changeEvent.entities;
+            json entitiesJson = check changeEvent.entities;
+            json[] entities = [];
+            
+            if entitiesJson is json[] {
+                entities = entitiesJson;
+            } else {
+                entities = [entitiesJson];
+            }
             
             foreach json entity in entities {
                 string entityName = check entity.name;
@@ -52,22 +145,40 @@ function processQuickBooksWebhook(json webhookPayload) returns error? {
                 
                 // Process only Customer entities
                 if entityName == "Customer" && (operation == "Create" || operation == "Update") {
-                    log:printInfo(string `Processing ${operation} event for Customer ID: ${entityId}`);
+                    log:printInfo(string `Processing ${operation} for Customer ID: ${entityId}`);
                     
-                    // Fetch customer details from QuickBooks
-                    // Note: In a real implementation, you would call QuickBooks API here
-                    // For this example, we'll simulate with the entity data
-                    QuickBooksCustomer qbCustomer = check entity.cloneWithType();
+                    QuickBooksCustomer|error qbCustomerResult = fetchQuickBooksCustomerDetails(entityId);
                     
-                    // Sync to Salesforce
+                    if qbCustomerResult is error {
+                        log:printError(string `Failed to fetch customer ${entityId}: ${qbCustomerResult.message()}`);
+                        continue;
+                    }
+                    
+                    QuickBooksCustomer qbCustomer = qbCustomerResult;
+                    
+                    // Log full QuickBooks customer data in JSON format
+                    json customerJson = qbCustomer.toJson();
+                    log:printInfo("===================================================================================================");
+                    log:printInfo("QUICKBOOKS CUSTOMER DATA (RAW JSON):");
+                    log:printInfo(customerJson.toJsonString());
+                    log:printInfo("===================================================================================================");
+                    
                     SyncResult result = syncCustomerToSalesforce(qbCustomer);
                     
                     if result.success {
-                        string? message = result?.message;
-                        log:printInfo(string `Successfully synced customer ${entityId}: ${message ?: ""}`);
+                        string? accountId = result?.accountId;
+                        if accountId is string {
+                            log:printInfo(string `Sync successful: ${qbCustomer.DisplayName} -> Salesforce Account ${accountId}`);
+                        } else {
+                            log:printInfo(string `Sync completed: ${qbCustomer.DisplayName}`);
+                        }
                     } else {
-                        string? message = result?.message;
-                        log:printError(string `Failed to sync customer ${entityId}: ${message ?: ""}`);
+                        string? errorDetails = result?.errorDetails;
+                        if errorDetails is string {
+                            log:printError(string `Sync failed for ${qbCustomer.DisplayName}: ${errorDetails}`);
+                        } else {
+                            log:printError(string `Sync failed for ${qbCustomer.DisplayName}`);
+                        }
                     }
                 }
             }

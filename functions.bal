@@ -3,7 +3,7 @@ import ballerina/log;
 import ballerina/time;
 
 // Check if customer should be synced based on filters
-public function shouldSyncCustomer(QuickBooksCustomer qbCustomer) returns boolean {
+public isolated function shouldSyncCustomer(QuickBooksCustomer qbCustomer) returns boolean {
     
     // Filter by active status if configured
     if filterActiveOnly {
@@ -16,26 +16,13 @@ public function shouldSyncCustomer(QuickBooksCustomer qbCustomer) returns boolea
     return true;
 }
 
-// Find existing Salesforce Account by duplicate detection strategy
-public function findExistingAccount(QuickBooksCustomer qbCustomer) returns string?|error {
+// Find Salesforce Account by Name
+public isolated function findAccountByName(string accountName) returns string?|error {
     
-    string soqlQuery = "";
-    
-    if duplicateMatchStrategy == MATCH_BY_EXTERNAL_ID {
-        // Match by QuickBooks Customer ID (External ID)
-        soqlQuery = string `SELECT Id FROM Account WHERE QuickBooks_Customer_Id__c = '${qbCustomer.Id}' LIMIT 1`;
-    } else if duplicateMatchStrategy == MATCH_BY_EMAIL {
-        // Match by email
-        string? email = qbCustomer?.PrimaryEmailAddr;
-        if email is () {
-            return ();
-        }
-        soqlQuery = string `SELECT Id FROM Account WHERE PersonEmail = '${email}' LIMIT 1`;
-    } else if duplicateMatchStrategy == MATCH_BY_NAME {
-        // Match by name
-        string name = qbCustomer.DisplayName;
-        soqlQuery = string `SELECT Id FROM Account WHERE Name = '${name}' LIMIT 1`;
-    }
+    // Escape single quotes in account name for SOQL
+    string:RegExp singleQuote = re `'`;
+    string escapedName = singleQuote.replaceAll(accountName, "\\'");
+    string soqlQuery = string `SELECT Id FROM Account WHERE Name = '${escapedName}' LIMIT 1`;
     
     stream<record {}, error?> resultStream = check salesforceClient->query(soqlQuery);
     
@@ -44,15 +31,19 @@ public function findExistingAccount(QuickBooksCustomer qbCustomer) returns strin
     
     if result is record {|record {} value;|} {
         record {} accountRecord = result.value;
-        string? accountId = <string?>accountRecord["Id"];
-        return accountId;
+        anydata idValue = accountRecord["Id"];
+        if idValue is string {
+            return idValue;
+        }
     }
     
     return ();
 }
 
+
+
 // Resolve conflict based on strategy
-public function shouldUpdateAccount(SalesforceAccount existingAccount, QuickBooksCustomer qbCustomer) returns boolean|error {
+public isolated function shouldUpdateAccount(SalesforceAccount existingAccount, QuickBooksCustomer qbCustomer) returns boolean|error {
     
     if conflictResolution == SOURCE_WINS {
         return true;
@@ -61,15 +52,20 @@ public function shouldUpdateAccount(SalesforceAccount existingAccount, QuickBook
     } else if conflictResolution == MOST_RECENT {
         // Compare last modified dates
         string? sfLastModified = existingAccount?.LastModifiedDate;
-        time:Civil? qbMetadata = qbCustomer?.MetaData;
+        MetaData? qbMetadata = qbCustomer?.MetaData;
         
         if sfLastModified is () || qbMetadata is () {
             return true;
         }
         
+        string? qbLastUpdated = qbMetadata?.LastUpdatedTime;
+        if qbLastUpdated is () {
+            return true;
+        }
+        
         // Parse Salesforce date and compare
         time:Utc sfTime = check time:utcFromString(sfLastModified);
-        time:Utc qbTime = check time:utcFromCivil(qbMetadata);
+        time:Utc qbTime = check time:utcFromString(qbLastUpdated);
         
         return time:utcDiffSeconds(qbTime, sfTime) > 0.0d;
     }
@@ -91,11 +87,78 @@ public function syncCustomerToSalesforce(QuickBooksCustomer qbCustomer) returns 
     // Map QuickBooks customer to Salesforce account
     SalesforceAccount sfAccount = mapQuickBooksCustomerToSalesforceAccount(qbCustomer);
     
-    // Check for existing account
-    string?|error existingAccountId = findExistingAccount(qbCustomer);
+    // Handle parent account relationship for sub-customers
+    ParentRef? parentRef = qbCustomer?.ParentRef;
+    
+    if parentRef is ParentRef {
+        string? parentCustomerId = parentRef?.value;
+        string? parentName = parentRef?.name;
+        
+        // If parent name is not available, fetch parent customer from QuickBooks to get the name
+        if parentCustomerId is string {
+            if parentName is () {
+                QuickBooksCustomer|error parentCustomerResult = fetchQuickBooksCustomerDetails(parentCustomerId);
+                
+                if parentCustomerResult is error {
+                    log:printError(string `Failed to fetch parent customer ${parentCustomerId}`);
+                } else {
+                    QuickBooksCustomer parentCustomer = parentCustomerResult;
+                    parentName = parentCustomer.DisplayName;
+                }
+            }
+            
+            if parentName is string {
+                // Check if parent account exists in Salesforce
+                string?|error parentAccountId = findAccountByName(parentName);
+            
+                if parentAccountId is string {
+                    sfAccount.ParentId = parentAccountId;
+                } else if parentAccountId is error {
+                    log:printError(string `Error finding parent account: ${parentName}`);
+                    return {
+                        success: false,
+                        message: string `Error finding parent account: ${parentName}`,
+                        errorDetails: parentAccountId.message()
+                    };
+                } else {
+                    // Parent does not exist in Salesforce - create it first
+                    QuickBooksCustomer|error parentCustomerResult = fetchQuickBooksCustomerDetails(parentCustomerId);
+                    
+                    if parentCustomerResult is error {
+                        log:printError(string `Failed to fetch parent customer ${parentCustomerId}`);
+                        return {
+                            success: false,
+                            message: string `Failed to fetch parent customer ${parentName}`,
+                            errorDetails: parentCustomerResult.message()
+                        };
+                    }
+                    
+                    QuickBooksCustomer parentCustomer = parentCustomerResult;
+                    SyncResult parentSyncResult = syncCustomerToSalesforce(parentCustomer);
+                    
+                    if !parentSyncResult.success {
+                        return {
+                            success: false,
+                            message: string `Failed to sync parent customer ${parentName}`,
+                            errorDetails: parentSyncResult?.errorDetails
+                        };
+                    }
+                    
+                    string? createdParentId = parentSyncResult?.accountId;
+                    if createdParentId is string {
+                        sfAccount.ParentId = createdParentId;
+                    }
+                }
+            }
+        }
+    } else {
+        sfAccount.ParentId = ();
+    }
+    
+    // Check for existing account by name
+    string?|error existingAccountId = findAccountByName(qbCustomer.DisplayName);
     
     if existingAccountId is error {
-        log:printError("Error finding existing account", existingAccountId);
         return {
             success: false,
             message: "Error finding existing account",
@@ -107,21 +170,50 @@ public function syncCustomerToSalesforce(QuickBooksCustomer qbCustomer) returns 
     
     if existingAccountId is string {
         // Account exists - check conflict resolution
-        SalesforceAccount|error existingAccount = salesforceClient->getById("Account", existingAccountId);
+        string queryStr = string `SELECT Id, Name, LastModifiedDate FROM Account WHERE Id = '${existingAccountId}' LIMIT 1`;
+        stream<record {}, error?>|error accountStreamResult = salesforceClient->query(queryStr);
         
-        if existingAccount is error {
-            log:printError("Error retrieving existing account", existingAccount);
+        if accountStreamResult is error {
             return {
                 success: false,
-                message: "Error retrieving existing account",
-                errorDetails: existingAccount.message()
+                message: "Error querying account",
+                errorDetails: accountStreamResult.message()
             };
         }
         
+        stream<record {}, error?> accountStream = accountStreamResult;
+        record {|record {} value;|}|error? accountResult = accountStream.next();
+        error? closeResult = accountStream.close();
+        
+        if accountResult is error {
+            return {
+                success: false,
+                message: "Error reading account",
+                errorDetails: accountResult.message()
+            };
+        }
+        
+        if accountResult is () {
+            return {
+                success: false,
+                message: "Account not found"
+            };
+        }
+        
+        record {} existingAccountRecord = accountResult.value;
+        SalesforceAccount|error existingAccountResult = existingAccountRecord.cloneWithType(SalesforceAccount);
+        if existingAccountResult is error {
+            return {
+                success: false,
+                message: "Error converting account record",
+                errorDetails: existingAccountResult.message()
+            };
+        }
+        
+        SalesforceAccount existingAccount = existingAccountResult;
         boolean|error shouldUpdate = shouldUpdateAccount(existingAccount, qbCustomer);
         
         if shouldUpdate is error {
-            log:printError("Error in conflict resolution", shouldUpdate);
             return {
                 success: false,
                 message: "Error in conflict resolution",
@@ -130,11 +222,9 @@ public function syncCustomerToSalesforce(QuickBooksCustomer qbCustomer) returns 
         }
         
         if shouldUpdate {
-            // Update existing account
             error? updateResult = salesforceClient->update("Account", existingAccountId, sfAccount);
             
             if updateResult is error {
-                log:printError("Error updating Salesforce account", updateResult);
                 return {
                     success: false,
                     message: "Error updating Salesforce account",
@@ -143,17 +233,14 @@ public function syncCustomerToSalesforce(QuickBooksCustomer qbCustomer) returns 
             }
             
             accountId = existingAccountId;
-            log:printInfo(string `Updated Salesforce Account: ${existingAccountId}`);
         } else {
             accountId = existingAccountId;
-            log:printInfo(string `Skipped update due to conflict resolution: ${existingAccountId}`);
         }
     } else {
         // Create new account
         salesforce:CreationResponse|error createResult = salesforceClient->create("Account", sfAccount);
         
         if createResult is error {
-            log:printError("Error creating Salesforce account", createResult);
             return {
                 success: false,
                 message: "Error creating Salesforce account",
@@ -162,7 +249,6 @@ public function syncCustomerToSalesforce(QuickBooksCustomer qbCustomer) returns 
         }
         
         accountId = createResult.id;
-        log:printInfo(string `Created Salesforce Account: ${createResult.id}`);
     }
     
     // Create contact if configured
@@ -173,11 +259,8 @@ public function syncCustomerToSalesforce(QuickBooksCustomer qbCustomer) returns 
         if sfContact is SalesforceContact {
             salesforce:CreationResponse|error contactResult = salesforceClient->create("Contact", sfContact);
             
-            if contactResult is error {
-                log:printError("Error creating Salesforce contact", contactResult);
-            } else {
+            if contactResult is salesforce:CreationResponse {
                 contactId = contactResult.id;
-                log:printInfo(string `Created Salesforce Contact: ${contactResult.id}`);
             }
         }
     }
