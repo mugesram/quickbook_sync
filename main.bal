@@ -4,11 +4,11 @@ import ballerina/time;
 
 // QuickBooks to Salesforce Sync Service
 //
-// SYNC LOGIC (Name-Based Matching):
-// - Searches Salesforce for existing account by customer name
-// - If found: Updates existing account (subject to conflict resolution)
-// - If not found: Creates new account
-// - Parent-child relationships are maintained
+// SYNC LOGIC:
+// CREATE (No Parent): Directly creates new account without search (fast path)
+// CREATE (With Parent): Searches for parent by QuickBooks ID, creates with relationship
+// UPDATE: Searches by QuickBooks ID, updates if found, skips if not found
+// - Parent-child relationships are maintained automatically
 
 // HTTP Listener for QuickBooks Webhooks
 listener http:Listener webhookListener = check new (webhookPort);
@@ -156,7 +156,7 @@ function processQuickBooksWebhook(json webhookPayload) returns error? {
                     
                     QuickBooksCustomer qbCustomer = qbCustomerResult;
                     
-                    SyncResult result = syncCustomerToSalesforce(qbCustomer);
+                    SyncResult result = syncCustomerToSalesforce(qbCustomer, operation);
                     
                     if result.success {
                         string? accountId = result?.accountId;

@@ -119,7 +119,8 @@ public isolated function mapQuickBooksCustomerToSalesforceAccount(QuickBooksCust
         ShippingCity: shippingCity,
         ShippingPostalCode: shippingPostalCode,
         Description: description,
-        Type: qbCustomer?.CustomerType
+        Type: qbCustomer?.CustomerType,
+        QuickbooksSync__c: qbCustomer.Id
     };
     
     return sfAccount;

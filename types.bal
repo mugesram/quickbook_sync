@@ -122,7 +122,7 @@ public type SalesforceAccount record {
     string|() ParentId?;
     string|() Description?;
     string|() Type?;
-    string|() QuickBooks_Customer_Id__c?;
+    string|() QuickbooksSync__c?;
     ()|string LastModifiedDate?;
 };
 

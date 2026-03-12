@@ -1,25 +1,98 @@
 # QuickBooks to Salesforce Sync
 
-A production-ready Ballerina integration that syncs QuickBooks customers to Salesforce accounts in real-time via webhooks.
+## Description
+
+This integration syncs QuickBooks customers to Salesforce accounts in real-time via webhooks. It provides a production-ready solution for maintaining synchronized customer data between QuickBooks Online and Salesforce, with support for parent-child relationships, conflict resolution, and automatic fallback mechanisms.
+
+### What It Does
+
+- Receives real-time webhook notifications from QuickBooks when customers are created or updated
+- Automatically creates or updates corresponding Salesforce Account records
+- Maintains parent-child relationships between QuickBooks sub-customers and Salesforce account hierarchy
+- Stores QuickBooks customer ID in Salesforce custom field for proper linking linking
+- Handles missing custom field scenarios with intelligent fallback logic
+- Supports configurable conflict resolution strategies (SOURCE_WINS, DESTINATION_WINS, MOST_RECENT)
+
 
 ## Features
 
 ✅ **Real-time Sync** - Webhook-based synchronization from QuickBooks to Salesforce  
-✅ **Bidirectional Linking** - Stores Salesforce Account ID in QuickBooks custom field  
+✅ **Duplicate Prevention** - Stores Salesforce Account ID in QuickBooks custom field  
 ✅ **Parent-Child Relationships** - Handles QuickBooks sub-customers → Salesforce account hierarchy  
-✅ **Loop Prevention** - Smart logic prevents infinite webhook cycles  
-✅ **Conflict Resolution** - Configurable strategies (SOURCE_WINS, DESTINATION_WINS, MOST_RECENT)  
 ✅ **Custom Field Validation** - Ensures custom field exists before syncing  
 ✅ **OAuth 2.0** - Secure authentication with automatic token refresh  
 
 ## Prerequisites
 
+Before running this integration, you need:
+
+### Salesforce Setup
+
+1. A Salesforce account with API access
+2. OAuth2 credentials:
+   - Client ID
+   - Client Secret
+   - Refresh Token
+   - Refresh URL
+   - Base URL (your Salesforce instance URL)
+3. Required scopes: `api`, `refresh_token`, `offline_access`
+
+This integration uses refresh token flow for auth. [Learn how to set up Salesforce OAuth](https://help.salesforce.com/s/articleView?id=xcloud.create_a_local_external_client_app.htm&type=5).
+
+### QuickBooks Setup
+
+1. A QuickBooks Online account with API access
+2. OAuth2 credentials:
+   - Client ID
+   - Client Secret
+   - Refresh Token
+   - Realm ID (Company ID)
+3. Webhook configuration:
+   - Public HTTPS endpoint for webhooks (use ngrok for local testing)
+   - Webhook verification token
+   - Customer entity subscription
+
+This integration uses refresh token flow for auth. [Learn how to set up QuickBooks OAuth](https://developer.intuit.com/app/developer/qbo/docs/develop/authentication-and-authorization/oauth-2.0).
+
+### Additional Requirements
+
 - Ballerina Swan Lake (2201.x or later)
-- QuickBooks Online account with API access
-- Salesforce account with API access
 - Public HTTPS endpoint for webhooks (use ngrok for local testing)
 
 ## Configuration
+
+The following configurations are required to connect to Salesforce and QuickBooks.
+
+### Salesforce Credentials
+
+- `salesforceClientId` - Your Salesforce OAuth2 client ID
+- `salesforceClientSecret` - Your Salesforce OAuth2 client secret
+- `salesforceRefreshToken` - Your Salesforce OAuth2 refresh token
+- `salesforceRefreshUrl` - Salesforce OAuth2 token endpoint (e.g., `https://login.salesforce.com/services/oauth2/token`)
+- `salesforceBaseUrl` - Your Salesforce instance URL (e.g., `https://yourinstance.salesforce.com`)
+
+### QuickBooks Credentials
+
+- `quickbooksClientId` - Your QuickBooks OAuth2 client ID
+- `quickbooksClientSecret` - Your QuickBooks OAuth2 client secret
+- `quickbooksRefreshToken` - Your QuickBooks OAuth2 refresh token
+- `quickbooksRealmId` - Your QuickBooks Company ID
+- `quickbooksBaseUrl` - QuickBooks API base URL
+  - Sandbox: `https://sandbox-quickbooks.api.intuit.com/v3/company`
+  - Production: `https://quickbooks.api.intuit.com/v3/company`
+
+### Webhook Configuration
+
+- `webhookPort` - Port for webhook listener (default: 8080)
+- `webhookVerifyToken` - Token for webhook verification
+
+### Sync Configuration
+
+- `conflictResolution` - Strategy for handling conflicts (options: `SOURCE_WINS`, `DESTINATION_WINS`, `MOST_RECENT`)
+- `filterActiveOnly` - Only sync active customers (default: true)
+- `createContact` - Create Salesforce contacts from customer data (default: false)
+
+### Configuration File Example
 
 Create a `Config.toml` file:
 
@@ -37,53 +110,53 @@ quickbooksClientSecret = "YOUR_QUICKBOOKS_CLIENT_SECRET"
 quickbooksRefreshToken = "YOUR_QUICKBOOKS_REFRESH_TOKEN"
 quickbooksRealmId = "YOUR_COMPANY_ID"
 quickbooksBaseUrl = "https://sandbox-quickbooks.api.intuit.com/v3/company"
-# For production: quickbooksBaseUrl = "https://quickbooks.api.intuit.com/v3/company"
 
 # Webhook Configuration
 webhookPort = 8080
 webhookVerifyToken = "YOUR_WEBHOOK_VERIFY_TOKEN"
 
 # Sync Configuration
-conflictResolution = "SOURCE_WINS"  # Options: SOURCE_WINS, DESTINATION_WINS, MOST_RECENT
-filterActiveOnly = true              # Only sync active customers
-createContact = false                # Create Salesforce contacts from customer data
-saveSalesforceIdToQuickBooks = true  # Save Salesforce ID back to QuickBooks
-quickbooksCustomFieldName = "Salesforce Account ID"
+conflictResolution = "SOURCE_WINS"
+filterActiveOnly = true
+createContact = false
 ```
 
 ## Setup
 
-### 1. Salesforce Setup
+### Custom Field Setup (REQUIRED)
 
-1. Create a Connected App in Salesforce
-2. Enable OAuth settings
-3. Add required scopes: `api`, `refresh_token`, `offline_access`
-4. Get Client ID, Client Secret, and Refresh Token
+**Salesforce Custom Field (REQUIRED for Updates):**
 
-### 2. QuickBooks Setup
+You MUST create this custom field in Salesforce Account object:
 
-1. Create an app in QuickBooks Developer Portal
-2. Enable OAuth 2.0
-3. Add webhook subscriptions for Customer entity
-4. Get Client ID, Client Secret, and Refresh Token
-5. Configure webhook URL: `https://your-domain.com/quickbooks/webhook`
+1. Go to Salesforce Setup → Object Manager → Account → Fields & Relationships
+2. Click "New" to create a custom field
+3. Field Type: **Text**
+4. Field Label: **Quickbooks Sync**
+5. Field Name: **QuickbooksSync** (API Name will be `QuickbooksSync__c`)
+6. Length: **255**
+7. Save and add to page layouts as needed
 
-### 3. Custom Field (REQUIRED - Manual Setup)
+**If this field doesn't exist:**
+- Create operations (without parent) will work with automatic fallback (creates without the field)
+- **Create operations (with parent) will STOP immediately** - no sync performed
+- **Update operations will STOP immediately** - no sync performed
+- Parent customer hierarchy will not work
+- Error message: "Field not there in Salesforce. For updating and having parent customer hierarchy, 'QuickbooksSync__c' custom field should be there in Salesforce. User have to create it in Salesforce Account object"
+- The field stores the QuickBooks customer ID for matching during updates and parent lookups
 
-**IMPORTANT**: You MUST create the custom field in QuickBooks before syncing.
+## Deploying on Devant
 
-1. Go to QuickBooks → Settings → Custom Fields
-2. Add Field → Select "Customers"
-3. Name: "Salesforce Account ID" (must match `quickbooksCustomFieldName` in Config.toml)
-4. Type: Text
+1. Sign in to your Devant account.
+2. Create a new Integration and follow instructions in [Devant Documentation](https://wso2.com/devant/docs/references/import-a-repository/) to import this repository.
+3. Select the **Technology** as `WSO2 Integrator: BI`.
+4. Choose the **Integration** Type as `Service` and click **Create**.
+5. Once the build is successful, click **Configure to Continue** and set up the required environment variables for Salesforce and QuickBooks credentials.
+6. Configure the webhook endpoint URL in QuickBooks Developer Portal to point to your deployed Devant service.
+7. Test the integration by creating or updating a customer in QuickBooks.
+8. Once tested, you may promote the integration to production. Make sure to set the relevant environment variables in the production environment as well.
 
-**If the custom field doesn't exist**:
-- Sync will be skipped entirely
-- Warning logs will be generated
-- No Salesforce operations will occur
-- You must create the field manually to enable syncing
-
-## Running
+## Running Locally
 
 ```bash
 # Build
@@ -96,8 +169,9 @@ bal run
 **IMPORTANT**: Webhooks will NOT trigger automatically when the service starts. You must:
 1. Start the service (`bal run`)
 2. Make the service publicly accessible (use ngrok for local testing)
-3. **Trigger a change in QuickBooks** (create or update a customer)
-4. Then QuickBooks will send a webhook to your service
+3. Configure webhook URL in QuickBooks Developer Portal
+4. **Trigger a change in QuickBooks** (create or update a customer)
+5. Then QuickBooks will send a webhook to your service
 
 ## API Endpoints
 
@@ -108,20 +182,52 @@ bal run
 
 ## Sync Behavior
 
-### ID-Based Matching
-- **If Salesforce ID exists in QuickBooks** → Search by ID and update
-- **If no Salesforce ID** → Create new account
-- **After sync** → Save Salesforce ID to QuickBooks
+### Create vs Update Operations
+
+**Create Operation (WITHOUT Parent):**
+- Directly creates a new Salesforce account without any search
+- Fast and simple - no Salesforce queries
+- Sets `QuickbooksSync__c` field with QuickBooks customer ID
+- **Fallback**: If creation fails due to missing `QuickbooksSync__c` field, retries without it
+- **Warning**: Without the custom field, updates and parent hierarchy will not work
+
+**Create Operation (WITH Parent):**
+- **REQUIRES** `QuickbooksSync__c` custom field in Salesforce
+- Searches Salesforce by `QuickbooksSync__c` field to find parent account
+- If parent found: Creates new account with parent relationship
+- If parent not found: Fetches parent from QuickBooks and syncs it first (recursive)
+- **If custom field missing**: Sync stops immediately with error (no fallback)
+- Maintains parent-child hierarchy automatically
+
+**Update Operation:**
+- **REQUIRES** `QuickbooksSync__c` custom field in Salesforce
+- Searches Salesforce by `QuickbooksSync__c` field (QuickBooks customer ID)
+- If found: Updates the existing account (subject to conflict resolution)
+- If not found: Logs "User not found in Salesforce" and skips update
+- **If custom field missing**: Sync stops immediately with error (no fallback)
+
+### Custom Field Requirement
+
+**You MUST create a custom field in Salesforce:**
+1. Go to Salesforce Setup → Object Manager → Account → Fields & Relationships
+2. Click "New" to create a custom field
+3. Field Type: Text
+4. Field Label: "Quickbooks Sync"
+5. Field Name: `QuickbooksSync` (API Name will be `QuickbooksSync__c`)
+6. Length: 255
+7. Save and add to page layouts as needed
+
+**If the custom field doesn't exist:**
+- Create operations (without parent) will automatically retry without the field and succeed
+- **Create operations (with parent) will stop immediately** - no sync performed
+- **Update operations will stop immediately** - no sync performed
+- Parent-child relationships will not work
+- Error log: "Field not there in Salesforce. For updating and having parent customer hierarchy, 'QuickbooksSync__c' custom field should be there in Salesforce. User have to create it in Salesforce Account object"
 
 ### Parent-Child Relationships
 - QuickBooks sub-customers → Salesforce child accounts
 - Parent accounts are synced first (recursive)
-- Parent relationships are maintained
-
-### Loop Prevention
-- Checks if Salesforce ID already matches before updating QuickBooks
-- Only updates when ID changes or is initially set
-- Prevents infinite webhook cycles
+- Parent relationships are maintained using `QuickbooksSync__c` field lookup
 
 ## Conflict Resolution Strategies
 
@@ -243,17 +349,20 @@ If you don't see logs, the webhook wasn't sent or didn't reach your service.
 - **Actually create/update a customer in QuickBooks** (webhooks don't trigger automatically)
 
 ### Custom Field Errors
-- **Sync skipped** - Check logs for "Custom field definition not found" warnings
-- Manually create the field in QuickBooks: Settings → Custom Fields → Add Field → Customers
-- Ensure field name matches `quickbooksCustomFieldName` exactly (default: "Salesforce Account ID")
-- Field type must be "Text"
-- Field must be enabled for Customers
-- Once created, restart the service or wait for next webhook event
+- **Update operations failing** - Check logs for "Field not there in Salesforce. For updating and having parent customer hierarchy, 'QuickbooksSync__c' custom field should be there in Salesforce"
+- **"Bad Request" errors** - Usually indicates the custom field is missing in Salesforce
+- **"Error finding parent account with QuickBooks ID"** - Parent customer hierarchy requires the custom field
+- **Parent-child relationships not working** - The custom field is required to link parent and child accounts
+- Create the custom field in Salesforce: Setup → Object Manager → Account → Fields & Relationships → New
+- Field Label: "Quickbooks Sync", Field Name: "QuickbooksSync" (API Name: `QuickbooksSync__c`)
+- Field type must be "Text" with length 255
+- Once created, update operations, parent lookups, and customer hierarchy will work automatically
 
-### Duplicate Accounts
-- Ensure `saveSalesforceIdToQuickBooks = true`
-- Check custom field is being populated
-- Verify loop prevention is working (check logs)
+### User Not Found Errors
+- **"User not found in Salesforce"** - This means the QuickBooks customer doesn't have a matching Salesforce account
+- The customer was likely created directly in QuickBooks without syncing to Salesforce first
+- Solution: Delete the customer in QuickBooks and recreate it (this will trigger a Create operation)
+- Or manually create the account in Salesforce and set the `QuickbooksSync__c` field to the QuickBooks customer ID
 
 ### Authentication Errors
 - Refresh tokens may expire - regenerate them
