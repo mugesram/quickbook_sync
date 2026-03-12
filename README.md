@@ -11,7 +11,7 @@ This integration syncs QuickBooks customers to Salesforce accounts in real-time 
 - Maintains parent-child relationships between QuickBooks sub-customers and Salesforce account hierarchy
 - Stores QuickBooks customer ID in Salesforce custom field for proper linking linking
 - Handles missing custom field scenarios with intelligent fallback logic
-- Supports configurable conflict resolution strategies (SOURCE_WINS, DESTINATION_WINS, MOST_RECENT)
+
 
 
 ## Features
