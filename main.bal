@@ -156,13 +156,6 @@ function processQuickBooksWebhook(json webhookPayload) returns error? {
                     
                     QuickBooksCustomer qbCustomer = qbCustomerResult;
                     
-                    // Log full QuickBooks customer data in JSON format
-                    json customerJson = qbCustomer.toJson();
-                    log:printInfo("===================================================================================================");
-                    log:printInfo("QUICKBOOKS CUSTOMER DATA (RAW JSON):");
-                    log:printInfo(customerJson.toJsonString());
-                    log:printInfo("===================================================================================================");
-                    
                     SyncResult result = syncCustomerToSalesforce(qbCustomer);
                     
                     if result.success {
