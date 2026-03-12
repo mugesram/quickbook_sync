@@ -229,12 +229,6 @@ bal run
 - Parent accounts are synced first (recursive)
 - Parent relationships are maintained using `QuickbooksSync__c` field lookup
 
-## Conflict Resolution Strategies
-
-- **SOURCE_WINS** - QuickBooks data always overwrites Salesforce
-- **DESTINATION_WINS** - Salesforce data is never overwritten
-- **MOST_RECENT** - Most recently modified record wins
-
 ## Logging
 
 All operations are logged with timestamps:
@@ -369,6 +363,4 @@ If you don't see logs, the webhook wasn't sent or didn't reach your service.
 - Verify client IDs and secrets are correct
 - Check OAuth scopes are sufficient
 
-## License
 
-MIT
