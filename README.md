@@ -203,7 +203,7 @@ bal run
 - **REQUIRES** `QuickbooksSync__c` custom field in Salesforce
 - Searches Salesforce by `QuickbooksSync__c` field (QuickBooks customer ID)
 - If found: Updates the existing account (subject to conflict resolution)
-- If not found: Logs "User not found in Salesforce" and skips update
+- **If not found: Automatically falls back to Create operation** - creates new account
 - **If custom field missing**: Sync stops immediately with error (no fallback)
 
 ### Custom Field Requirement
@@ -358,11 +358,11 @@ If you don't see logs, the webhook wasn't sent or didn't reach your service.
 - Field type must be "Text" with length 255
 - Once created, update operations, parent lookups, and customer hierarchy will work automatically
 
-### User Not Found Errors
-- **"User not found in Salesforce"** - This means the QuickBooks customer doesn't have a matching Salesforce account
-- The customer was likely created directly in QuickBooks without syncing to Salesforce first
-- Solution: Delete the customer in QuickBooks and recreate it (this will trigger a Create operation)
-- Or manually create the account in Salesforce and set the `QuickbooksSync__c` field to the QuickBooks customer ID
+### User Not Found During Update
+- **"User not found in Salesforce"** - This warning appears when an Update operation can't find a matching account
+- **Automatic fallback**: The integration automatically falls back to Create operation
+- A new account will be created in Salesforce with the QuickBooks customer data
+- This handles cases where customers were created directly in QuickBooks without prior sync
 
 ### Authentication Errors
 - Refresh tokens may expire - regenerate them

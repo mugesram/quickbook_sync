@@ -315,12 +315,12 @@ public function syncCustomerToSalesforce(QuickBooksCustomer qbCustomer, string o
                 log:printInfo(string `Skipped update for account ${existingAccountId} due to conflict resolution`);
             }
         } else {
-            // Account not found in Salesforce
+            // Account not found in Salesforce - fall back to create operation
             log:printWarn(string `User not found in Salesforce for QuickBooks ID: ${qbCustomer.Id}`);
-            return {
-                success: false,
-                message: string `User not found in Salesforce for QuickBooks ID: ${qbCustomer.Id}`
-            };
+            log:printInfo(string `Falling back to Create operation for customer: ${qbCustomer.DisplayName}`);
+            
+            // Recursively call with Create operation
+            return syncCustomerToSalesforce(qbCustomer, "Create");
         }
     } else {
         // Create operation - just create new account without searching

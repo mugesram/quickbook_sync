@@ -376,9 +376,9 @@ modules = [
 ]
 
 [[package]]
-org = "devantdemos"
-name = "quickbook_sync"
-version = "1.0.0"
+org = "wso2"
+name = "quickbook_customers_sync_salesforce_account"
+version = "0.1.0"
 dependencies = [
 	{org = "ballerina", name = "http"},
 	{org = "ballerina", name = "lang.regexp"},
@@ -387,6 +387,6 @@ dependencies = [
 	{org = "ballerinax", name = "salesforce"}
 ]
 modules = [
-	{org = "devantdemos", packageName = "quickbook_sync", moduleName = "quickbook_sync"}
+	{org = "wso2", packageName = "quickbook_customers_sync_salesforce_account", moduleName = "quickbook_customers_sync_salesforce_account"}
 ]
 
