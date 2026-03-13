@@ -13,15 +13,6 @@ This integration syncs QuickBooks customers to Salesforce accounts in real-time 
 - Handles missing custom field scenarios with intelligent fallback logic
 
 
-
-## Features
-
-✅ **Real-time Sync** - Webhook-based synchronization from QuickBooks to Salesforce  
-✅ **Duplicate Prevention** - Stores Salesforce Account ID in QuickBooks custom field  
-✅ **Parent-Child Relationships** - Handles QuickBooks sub-customers → Salesforce account hierarchy  
-✅ **Custom Field Validation** - Ensures custom field exists before syncing  
-✅ **OAuth 2.0** - Secure authentication with automatic token refresh  
-
 ## Prerequisites
 
 Before running this integration, you need:
@@ -362,5 +353,3 @@ If you don't see logs, the webhook wasn't sent or didn't reach your service.
 - Refresh tokens may expire - regenerate them
 - Verify client IDs and secrets are correct
 - Check OAuth scopes are sufficient
-
-
