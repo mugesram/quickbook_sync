@@ -6,7 +6,7 @@
     E -- No --> X(["Stopped: Create Custom Field in Salesforce"])
     E -- Yes --> F["Find Account by QuickbooksSync__c"]
     F --> G{"Account Found?"}
-    G -- Yes --> H["Convert to Salesforce Data format"]
+    G -- Yes --> H["Convert to Salesforce Data format and do Conflict Resolution"]
     H --> I["Update Salesforce Account"]
     G -- No --> D
     D --> J{"Has Parent Customer?"}
